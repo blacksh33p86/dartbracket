@@ -100,6 +100,40 @@
         return wrapper;
     }
 
+    function makePayout(payout) {
+        const wrapper = element('section', 'screen-payout');
+        const heading = element('div', 'screen-payout-heading');
+        heading.append(
+            element('h2', 'screen-section-title', 'Geplante Ausschüttung'),
+            element(
+                'strong',
+                'screen-payout-total',
+                new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' })
+                    .format((payout.pool_cents || 0) / 100)
+            )
+        );
+        wrapper.append(heading);
+
+        if (!payout.places?.length || Number(payout.percentage_basis_points) === 0) {
+            wrapper.append(element('p', 'screen-payout-empty', 'Für dieses Turnier ist keine Ausschüttung festgelegt.'));
+            return wrapper;
+        }
+
+        const list = element('ol', 'screen-payout-list');
+        const currency = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
+        payout.places.forEach((place) => {
+            const row = element('li', 'screen-payout-place');
+            row.append(
+                element('span', 'screen-payout-rank', `${place.place}. Platz`),
+                element('span', 'screen-payout-player', place.player_name || 'Noch offen'),
+                element('strong', 'screen-payout-amount', currency.format((place.amount_cents || 0) / 100))
+            );
+            list.append(row);
+        });
+        wrapper.append(list);
+        return wrapper;
+    }
+
     function render(data) {
         app.replaceChildren();
         const tournament = data.tournament;
@@ -138,6 +172,7 @@
             stats.append(stat);
         });
 
+        const payout = makePayout(data.payout || { places: [], pool_cents: 0 });
         const main = element('div', 'screen-main');
         const bracket = element('section', 'screen-bracket');
         bracket.append(element('h2', 'screen-section-title', 'Turnierbaum & Spielplan'));
@@ -208,7 +243,7 @@
             element('span', '', `Aktualisiert ${new Intl.DateTimeFormat('de-DE', { timeStyle: 'medium' }).format(new Date(data.updated_at))}`),
             element('span', '', 'Automatische Aktualisierung alle 4 Sekunden')
         );
-        app.append(header, stats, main, footer);
+        app.append(header, stats, payout, main, footer);
     }
 
     let fetching = false;

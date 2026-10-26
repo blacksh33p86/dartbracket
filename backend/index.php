@@ -886,7 +886,7 @@ function e(mixed $value): string
                                 </section>
                             <?php endforeach; ?>
                         </div>
-                        <p class="standings-note">Platzierung: Siege, Punktedifferenz, erzielte Punkte, danach alphabetisch.</p>
+                        <p class="standings-note">Platzierung nach Siegen, Punktedifferenz und erzielten Punkten. Im Rundenturnier werden absolute Gleichstände um die Plätze 1 bis 4 durch Entscheidungsspiele aufgelöst.</p>
                     <?php endif; ?>
                     <?php if ($rounds): ?>
                         <?php foreach ($rounds as $roundNumber => $roundMatches): ?>

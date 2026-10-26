@@ -78,6 +78,8 @@ if (isset($_GET['data'])) {
         $tournamentId = (int) $tournament['id'];
         $matches = matchesForTournament($db, $tournamentId);
         $participants = participantsForTournament($db, $tournamentId);
+        $standings = standingsForTournament($db, $tournament);
+        $payout = payoutPlacesWithWinners($tournament, count($participants), $matches, $standings);
         $displayLabels = matchDisplayLabels($matches, $tournament);
         $rounds = [];
 
@@ -107,7 +109,13 @@ if (isset($_GET['data'])) {
                 array_values($rounds)
             )),
             'upcoming_preview' => upcomingMatchPreviews($db, $tournament, $matches),
-            'standings' => standingsForTournament($db, $tournament),
+            'standings' => $standings,
+            'payout' => [
+                'total_cents' => $payout['total_cents'],
+                'pool_cents' => $payout['pool_cents'],
+                'percentage_basis_points' => (int) $tournament['payout_percent_basis_points'],
+                'places' => $payout['places'],
+            ],
             'counts' => [
                 'played' => count(array_filter($matches, static fn (array $match): bool => $match['status'] === 'completed')),
                 'remaining' => totalMatchCountForTournament($tournament, count($participants), $matches),

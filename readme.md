@@ -35,7 +35,8 @@ Alle Benutzer haben dieselben Rechte. In der Benutzerverwaltung können Konten e
 - Turniere anlegen und Stammdaten vor der Auslosung bearbeiten
 - Teilnehmer hinzufügen und entfernen sowie Spieler aus anderen nicht archivierten Turnieren importieren; vorhandene Namen werden beim Import übersprungen
 - zufällige Erstauslosung mit automatisch zugeordneten Freilosen
-- Einfach-KO mit automatischem Rundenfortschritt, Doppel-KO mit Ausscheiden nach der zweiten Niederlage, Rundenturnier (einmal jeder gegen jeden) sowie Gruppenphase mit anschließender K.-o.-Runde
+- Einfach-KO und Doppel-KO mit Entscheidungsspiel um Platz 3/4; beim Rundenturnier werden absolute Gleichstände innerhalb der ersten vier Plätze durch zusätzliche Jeder-gegen-jeden-Entscheidungsspiele aufgelöst
+- Rundenturnier (einmal jeder gegen jeden) sowie Gruppenphase mit anschließender K.-o.-Runde
 - Rundenturnier- und Gruppentabellen mit Siegen, Punktedifferenz und erzielten Punkten; bei der Gruppenphase qualifizieren sich pro Turnier wählbar ein bis vier Spieler je Gruppe
 - Ergebnisse erfassen; Paarungen der nächsten Runde werden danach erzeugt
 - gespeicherte Ergebnisse korrigieren, solange kein Spiel einer späteren Runde beendet wurde; abhängige, noch ungespielte Runden werden bei einer Siegeränderung neu erzeugt

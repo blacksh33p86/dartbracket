@@ -322,6 +322,90 @@ function payoutForTournament(?array $tournament, int $participantCount): array
     ];
 }
 
+function payoutPlacesWithWinners(
+    ?array $tournament,
+    int $participantCount,
+    array $matches,
+    array $standings
+): array {
+    $payout = payoutForTournament($tournament, $participantCount);
+    $winnerByPlace = [];
+
+    if ($tournament !== null && $tournament['status'] === 'completed') {
+        $format = (string) ($tournament['format'] ?? 'knockout');
+
+        if ($format === 'round_robin') {
+            foreach ($standings['Rundenturnier'] ?? [] as $index => $player) {
+                $winnerByPlace[$index + 1] = [
+                    'id' => (int) $player['id'],
+                    'name' => (string) $player['name'],
+                ];
+            }
+        } else {
+            $displayLabels = matchDisplayLabels($matches, $tournament);
+            $finalMatches = array_values(array_filter(
+                $matches,
+                static fn (array $match): bool => $match['status'] === 'completed'
+                    && str_starts_with(
+                        (string) ($displayLabels[(int) $match['id']]['stage'] ?? ''),
+                        'Finale'
+                    )
+                    && $match['winner_id'] !== null
+            ));
+            usort($finalMatches, static fn (array $left, array $right): int =>
+                (int) $right['round_number'] <=> (int) $left['round_number']
+                    ?: (int) $right['match_number'] <=> (int) $left['match_number']
+            );
+
+            if ($finalMatches !== []) {
+                $final = $finalMatches[0];
+                $winnerId = (int) $final['winner_id'];
+                $winnerName = $winnerId === (int) $final['player_one_id']
+                    ? $final['player_one_name']
+                    : $final['player_two_name'];
+                $runnerUpId = $winnerId === (int) $final['player_one_id']
+                    ? (int) $final['player_two_id']
+                    : (int) $final['player_one_id'];
+                $runnerUpName = $winnerId === (int) $final['player_one_id']
+                    ? $final['player_two_name']
+                    : $final['player_one_name'];
+                $winnerByPlace[1] = ['id' => $winnerId, 'name' => (string) $winnerName];
+                $winnerByPlace[2] = ['id' => $runnerUpId, 'name' => (string) $runnerUpName];
+            }
+
+            foreach ($matches as $match) {
+                $stage = (string) ($displayLabels[(int) $match['id']]['stage'] ?? '');
+                if ($match['status'] !== 'completed'
+                    || $match['winner_id'] === null
+                    || !preg_match('/^Spiel um Platz (\d+)$/', $stage, $placement)) {
+                    continue;
+                }
+
+                $place = (int) $placement[1];
+                $winnerId = (int) $match['winner_id'];
+                $winnerIsPlayerOne = $winnerId === (int) $match['player_one_id'];
+                $winnerByPlace[$place] = [
+                    'id' => $winnerId,
+                    'name' => (string) ($winnerIsPlayerOne ? $match['player_one_name'] : $match['player_two_name']),
+                ];
+                $winnerByPlace[$place + 1] = [
+                    'id' => $winnerIsPlayerOne ? (int) $match['player_two_id'] : (int) $match['player_one_id'],
+                    'name' => (string) ($winnerIsPlayerOne ? $match['player_two_name'] : $match['player_one_name']),
+                ];
+            }
+        }
+    }
+
+    foreach ($payout['places'] as &$place) {
+        $winner = $winnerByPlace[$place['place']] ?? null;
+        $place['player_id'] = $winner['id'] ?? null;
+        $place['player_name'] = $winner['name'] ?? null;
+    }
+    unset($place);
+
+    return $payout;
+}
+
 function validDate(string $date): bool
 {
     $parsed = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
@@ -541,6 +625,10 @@ function totalMatchCountForTournament(?array $tournament, int $participantCount,
     $format = (string) ($tournament['format'] ?? 'knockout');
     if ($format === 'round_robin') {
         $totalMatches = intdiv($participantCount * ($participantCount - 1), 2);
+        $totalMatches += count(array_filter(
+            $matches,
+            static fn (array $match): bool => $match['bracket'] === 'Entscheidungsspiel'
+        ));
     } elseif ($format === 'groups_ko') {
         $qualifiersPerGroup = (int) $tournament['qualifiers_per_group'];
         if ($participantCount < 2 * ($qualifiersPerGroup + 1)) {
@@ -553,9 +641,9 @@ function totalMatchCountForTournament(?array $tournament, int $participantCount,
             $groupSizes
         ));
         $qualifierCount = count($groupSizes) * $qualifiersPerGroup;
-        $totalMatches = $groupMatches + $qualifierCount - 1;
+        $totalMatches = $groupMatches + $qualifierCount - 1 + ($qualifierCount >= 4 ? 1 : 0);
     } elseif ($tournament['mode'] === 'double_ko') {
-        $totalMatches = 2 * $participantCount - 2;
+        $totalMatches = 2 * $participantCount - 2 + ($participantCount >= 4 ? 1 : 0);
         if (array_filter(
             $matches,
             static fn (array $match): bool => $match['bracket'] === 'Finale (Rückspiel)'
@@ -564,7 +652,7 @@ function totalMatchCountForTournament(?array $tournament, int $participantCount,
             $totalMatches++;
         }
     } else {
-        $totalMatches = $participantCount - 1;
+        $totalMatches = $participantCount - 1 + ($participantCount >= 4 ? 1 : 0);
     }
 
     return max(0, $totalMatches - count(array_filter(
@@ -627,7 +715,8 @@ function recordResult(PDO $db, int $tournamentId, int $matchId, int $scoreOne, i
 
         $isRoundRobinMatch = (string) ($match['bracket'] ?? '') === 'Rundenturnier';
         $isGroupStageMatch = str_starts_with((string) ($match['bracket'] ?? ''), 'Gruppe ');
-        if (!$isRoundRobinMatch && !$isGroupStageMatch) {
+        $isDecisionMatch = (string) ($match['bracket'] ?? '') === 'Entscheidungsspiel';
+        if (!$isRoundRobinMatch && !$isGroupStageMatch && !$isDecisionMatch) {
             $statement = $db->prepare('UPDATE participants SET losses = losses + 1 WHERE id = :id');
             $statement->execute(['id' => $loserId]);
         }
@@ -808,7 +897,9 @@ function editResult(PDO $db, int $tournamentId, int $matchId, int $scoreOne, int
 
             foreach ($completedMatches->fetchAll() as $completedMatch) {
                 $bracket = (string) $completedMatch['bracket'];
-                if ($bracket === 'Rundenturnier' || str_starts_with($bracket, 'Gruppe ')) {
+                if ($bracket === 'Rundenturnier'
+                    || $bracket === 'Entscheidungsspiel'
+                    || str_starts_with($bracket, 'Gruppe ')) {
                     continue;
                 }
 
@@ -913,7 +1004,7 @@ function assignDartboard(PDO $db, int $tournamentId, int $matchId, string $board
     }
 }
 
-function createRoundRobinMatches(PDO $db, int $tournamentId, array $groups): void
+function createRoundRobinMatches(PDO $db, int $tournamentId, array $groups, int $roundOffset = 0): void
 {
     $schedule = [];
 
@@ -932,7 +1023,7 @@ function createRoundRobinMatches(PDO $db, int $tournamentId, array $groups): voi
                 $playerTwo = $rotation[count($rotation) - 1 - $index];
 
                 if ($playerOne !== 0 && $playerTwo !== 0) {
-                    $schedule[$round + 1][] = [
+                    $schedule[$round + 1 + $roundOffset][] = [
                         'bracket' => $group['bracket'],
                         'player_one_id' => $playerOne,
                         'player_two_id' => $playerTwo,
@@ -991,6 +1082,10 @@ function standingsForTournament(PDO $db, array $tournament): array
                 'score_for' => 0,
                 'score_against' => 0,
                 'difference' => 0,
+                'decision_wins' => 0,
+                'decision_score_for' => 0,
+                'decision_score_against' => 0,
+                'decision_difference' => 0,
             ];
         }
     }
@@ -1002,6 +1097,21 @@ function standingsForTournament(PDO $db, array $tournament): array
             : str_starts_with($bracket, 'Gruppe ');
 
         if (!$isGroupMatch) {
+            if ($format === 'round_robin' && $bracket === 'Entscheidungsspiel'
+                && $match['status'] === 'completed') {
+                $oneId = (int) $match['player_one_id'];
+                $twoId = (int) $match['player_two_id'];
+                $oneScore = (int) $match['score_one'];
+                $twoScore = (int) $match['score_two'];
+                if (isset($standings['Rundenturnier'][$oneId], $standings['Rundenturnier'][$twoId])) {
+                    $standings['Rundenturnier'][$oneId]['decision_score_for'] += $oneScore;
+                    $standings['Rundenturnier'][$oneId]['decision_score_against'] += $twoScore;
+                    $standings['Rundenturnier'][$twoId]['decision_score_for'] += $twoScore;
+                    $standings['Rundenturnier'][$twoId]['decision_score_against'] += $oneScore;
+                    $winnerId = (int) $match['winner_id'];
+                    $standings['Rundenturnier'][$winnerId]['decision_wins']++;
+                }
+            }
             continue;
         }
 
@@ -1018,6 +1128,10 @@ function standingsForTournament(PDO $db, array $tournament): array
                     'score_for' => 0,
                     'score_against' => 0,
                     'difference' => 0,
+                    'decision_wins' => 0,
+                    'decision_score_for' => 0,
+                    'decision_score_against' => 0,
+                    'decision_difference' => 0,
                 ];
             }
         }
@@ -1049,6 +1163,7 @@ function standingsForTournament(PDO $db, array $tournament): array
     foreach ($standings as &$groupStandings) {
         foreach ($groupStandings as &$standing) {
             $standing['difference'] = $standing['score_for'] - $standing['score_against'];
+            $standing['decision_difference'] = $standing['decision_score_for'] - $standing['decision_score_against'];
         }
         unset($standing);
 
@@ -1056,6 +1171,9 @@ function standingsForTournament(PDO $db, array $tournament): array
             return $right['wins'] <=> $left['wins']
                 ?: $right['difference'] <=> $left['difference']
                 ?: $right['score_for'] <=> $left['score_for']
+                ?: $right['decision_wins'] <=> $left['decision_wins']
+                ?: $right['decision_difference'] <=> $left['decision_difference']
+                ?: $right['decision_score_for'] <=> $left['decision_score_for']
                 ?: strcasecmp($left['name'], $right['name']);
         });
         $groupStandings = array_values($groupStandings);
@@ -1063,6 +1181,82 @@ function standingsForTournament(PDO $db, array $tournament): array
     unset($groupStandings);
 
     return $standings;
+}
+
+function roundRobinTopFourTies(array $standings): array
+{
+    $ties = [];
+    $profiles = [];
+    foreach ($standings as $index => $player) {
+        $key = implode('|', [(int) $player['wins'], (int) $player['difference'], (int) $player['score_for']]);
+        $profiles[$key]['start'] ??= $index;
+        $profiles[$key]['players'][] = $player;
+    }
+
+    foreach ($profiles as $profile) {
+        if (count($profile['players']) > 1 && $profile['start'] < 4) {
+            $ties[] = $profile['players'];
+        }
+    }
+
+    return $ties;
+}
+
+function tiedByDecisionResults(array $players): array
+{
+    $profiles = [];
+    foreach ($players as $player) {
+        $key = implode('|', [
+            (int) ($player['decision_wins'] ?? 0),
+            (int) ($player['decision_difference'] ?? 0),
+            (int) ($player['decision_score_for'] ?? 0),
+        ]);
+        $profiles[$key][] = $player;
+    }
+
+    return array_values(array_filter($profiles, static fn (array $group): bool => count($group) > 1));
+}
+
+function doubleKoPlacementPlayers(PDO $db, int $tournamentId, array $finalistIds): array
+{
+    $finalists = array_fill_keys(array_map('intval', $finalistIds), true);
+    $participants = participantsForTournament($db, $tournamentId);
+    $eliminated = [];
+    foreach ($participants as $participant) {
+        $id = (int) $participant['id'];
+        if ((int) $participant['losses'] >= 2 && !isset($finalists[$id])) {
+            $eliminated[$id] = (string) $participant['name'];
+        }
+    }
+
+    $matches = matchesForTournament($db, $tournamentId);
+    usort($matches, static fn (array $left, array $right): int =>
+        (int) $right['round_number'] <=> (int) $left['round_number']
+            ?: (int) $right['match_number'] <=> (int) $left['match_number']
+    );
+    $placementPlayers = [];
+
+    foreach ($matches as $match) {
+        if ($match['status'] !== 'completed' || $match['winner_id'] === null) {
+            continue;
+        }
+
+        $loserId = (int) $match['winner_id'] === (int) $match['player_one_id']
+            ? (int) $match['player_two_id']
+            : (int) $match['player_one_id'];
+        if (!isset($eliminated[$loserId]) || isset($placementPlayers[$loserId])) {
+            continue;
+        }
+        $placementPlayers[$loserId] = $eliminated[$loserId];
+        if (count($placementPlayers) === 2) {
+            break;
+        }
+    }
+
+    return array_map(
+        'intval',
+        array_keys($placementPlayers)
+    );
 }
 
 function advanceTournament(PDO $db, int $tournamentId): void
@@ -1077,14 +1271,46 @@ function advanceTournament(PDO $db, int $tournamentId): void
     $format = (string) ($tournament['format'] ?? 'knockout');
 
     if ($format === 'round_robin') {
-        $pending = $db->prepare("SELECT COUNT(*) FROM matches WHERE tournament_id = :id AND status = 'pending'");
-        $pending->execute(['id' => $tournamentId]);
-
-        if ((int) $pending->fetchColumn() === 0) {
-            $db->prepare("UPDATE tournaments SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = :id")
-                ->execute(['id' => $tournamentId]);
+        $matches = matchesForTournament($db, $tournamentId);
+        if (array_filter($matches, static fn (array $match): bool => $match['status'] === 'pending')) {
+            return;
         }
 
+        $standings = standingsForTournament($db, $tournament);
+        $tiedGroups = roundRobinTopFourTies($standings['Rundenturnier'] ?? []);
+        $nextPlayoffGroups = [];
+        $maxRound = $matches === [] ? 0 : (int) max(array_column($matches, 'round_number'));
+
+        foreach ($tiedGroups as $players) {
+            $hasDecisionResults = array_filter(
+                $players,
+                static fn (array $player): bool => (int) ($player['decision_wins'] ?? 0) > 0
+                    || (int) ($player['decision_score_for'] ?? 0) > 0
+                    || (int) ($player['decision_score_against'] ?? 0) > 0
+            );
+            $playoffTies = tiedByDecisionResults($players);
+            if ($hasDecisionResults === []) {
+                $nextPlayoffGroups[] = [
+                    'bracket' => 'Entscheidungsspiel',
+                    'players' => array_map(static fn (array $player): int => (int) $player['id'], $players),
+                ];
+                continue;
+            }
+            foreach ($playoffTies as $tie) {
+                $nextPlayoffGroups[] = [
+                    'bracket' => 'Entscheidungsspiel',
+                    'players' => array_map(static fn (array $player): int => (int) $player['id'], $tie),
+                ];
+            }
+        }
+
+        if ($nextPlayoffGroups !== []) {
+            createRoundRobinMatches($db, $tournamentId, $nextPlayoffGroups, $maxRound);
+            return;
+        }
+
+        $db->prepare("UPDATE tournaments SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = :id")
+            ->execute(['id' => $tournamentId]);
         return;
     }
 
@@ -1169,12 +1395,20 @@ function advanceTournament(PDO $db, int $tournamentId): void
     $statement->execute(['tournament_id' => $tournamentId, 'maximum_losses' => $maximumLosses]);
     $active = $statement->fetchAll();
 
-    if (count($active) <= 1) {
+    $pendingMatches = $db->prepare(
+        "SELECT COUNT(*) FROM matches WHERE tournament_id = :id AND status = 'pending'"
+    );
+    $pendingMatches->execute(['id' => $tournamentId]);
+
+    if (count($active) <= 1 && (int) $pendingMatches->fetchColumn() === 0) {
         $statement = $db->prepare(
             "UPDATE tournaments SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = :id"
         );
         $statement->execute(['id' => $tournamentId]);
 
+        return;
+    }
+    if (count($active) <= 1) {
         return;
     }
 
@@ -1199,17 +1433,44 @@ function advanceTournament(PDO $db, int $tournamentId): void
 
     if ($mode === 'ko') {
         $statement = $db->prepare(
-            'SELECT winner_id FROM matches
+            'SELECT * FROM matches
              WHERE tournament_id = :tournament_id AND round_number = :round_number
              ORDER BY match_number'
         );
         $statement->execute(['tournament_id' => $tournamentId, 'round_number' => $roundNumber - 1]);
-        $winners = array_map('intval', $statement->fetchAll(PDO::FETCH_COLUMN));
+        $previousRound = $statement->fetchAll();
+        $winners = array_map(static fn (array $match): int => (int) $match['winner_id'], $previousRound);
         $groups[] = [
             'bracket' => 'Sieger-Runde',
             'players' => $winners,
             'preserve_order' => true,
         ];
+        $knockoutBracket = ($tournament['format'] ?? 'knockout') === 'groups_ko'
+            ? 'K.-o.-Runde'
+            : 'Sieger-Runde';
+        $semifinalMatches = array_values(array_filter(
+            $previousRound,
+            static fn (array $match): bool => $match['bracket'] === $knockoutBracket
+                && $match['status'] === 'completed'
+                && $match['player_one_id'] !== null
+                && $match['player_two_id'] !== null
+        ));
+        $semifinalPlayers = [];
+        $semifinalLosers = [];
+        foreach ($semifinalMatches as $match) {
+            $semifinalPlayers[(int) $match['player_one_id']] = true;
+            $semifinalPlayers[(int) $match['player_two_id']] = true;
+            $semifinalLosers[] = (int) $match['winner_id'] === (int) $match['player_one_id']
+                ? (int) $match['player_two_id']
+                : (int) $match['player_one_id'];
+        }
+        if (count($semifinalMatches) === 2 && count($semifinalPlayers) === 4) {
+            $groups[] = [
+                'bracket' => 'Spiel um Platz 3',
+                'players' => $semifinalLosers,
+                'preserve_order' => true,
+            ];
+        }
     } else {
         $statement = $db->prepare(
             'SELECT * FROM matches
@@ -1222,6 +1483,10 @@ function advanceTournament(PDO $db, int $tournamentId): void
         $byLosses = [0 => [], 1 => []];
 
         foreach ($previousRound as $previousMatch) {
+            if (str_starts_with((string) $previousMatch['bracket'], 'Spiel um Platz ')) {
+                continue;
+            }
+
             $winnerId = (int) $previousMatch['winner_id'];
             $winnerLosses = $lossesById[$winnerId];
             $byLosses[$winnerLosses][] = $winnerId;
@@ -1240,16 +1505,34 @@ function advanceTournament(PDO $db, int $tournamentId): void
             }
         }
 
-        if (count($active) === 2 && count($byLosses[0]) === 1 && count($byLosses[1]) === 1) {
+        $activeByLosses = [0 => [], 1 => []];
+        foreach ($active as $participant) {
+            $losses = (int) $participant['losses'];
+            if (isset($activeByLosses[$losses])) {
+                $activeByLosses[$losses][] = (int) $participant['id'];
+            }
+        }
+
+        if (count($active) === 2 && count($activeByLosses[0]) === 1 && count($activeByLosses[1]) === 1) {
             $groups[] = [
                 'bracket' => 'Finale',
-                'players' => array_merge($byLosses[0], $byLosses[1]),
+                'players' => array_merge($activeByLosses[0], $activeByLosses[1]),
                 'preserve_order' => true,
             ];
-        } elseif (count($active) === 2 && count($byLosses[1]) === 2) {
+            if (count(participantsForTournament($db, $tournamentId)) >= 4) {
+                $placementPlayers = doubleKoPlacementPlayers($db, $tournamentId, array_column($active, 'id'));
+                if (count($placementPlayers) === 2) {
+                    $groups[] = [
+                        'bracket' => 'Spiel um Platz 3',
+                        'players' => $placementPlayers,
+                        'preserve_order' => true,
+                    ];
+                }
+            }
+        } elseif (count($active) === 2 && count($activeByLosses[1]) === 2) {
             $groups[] = [
                 'bracket' => 'Finale (Rückspiel)',
-                'players' => $byLosses[1],
+                'players' => $activeByLosses[1],
                 'preserve_order' => true,
             ];
         } else {
@@ -1402,6 +1685,10 @@ function knockoutStageLabel(int $competitorCount, array $tournament, string $bra
 {
     if (str_starts_with($bracket, 'Finale')) {
         return $bracket === 'Finale (Rückspiel)' ? 'Finale · Rückspiel' : 'Finale';
+    }
+
+    if ($bracket === 'Entscheidungsspiel') {
+        return 'Entscheidungsspiel';
     }
 
     if (!in_array($bracket, ['Sieger-Runde', 'Verlierer-Runde', 'K.-o.-Runde'], true)) {
