@@ -58,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $redirectSection = match ($_POST['action'] ?? '') {
-        'add_participant', 'remove_participant' => 'teilnehmer',
+        'add_participant', 'remove_participant', 'import_participants' => 'teilnehmer',
         'save_payout' => 'ausschuettung',
         'draw_tournament', 'save_result', 'edit_result', 'assign_dartboard' => 'auslosung',
         default => 'turnier',
@@ -128,6 +128,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($action === 'add_participant') {
                 addParticipant($db, $tournamentId, (string) ($_POST['player_name'] ?? ''));
                 $_SESSION['flash'] = ['type' => 'success', 'message' => 'Der Teilnehmer wurde hinzugefügt.'];
+            } elseif ($action === 'import_participants') {
+                $sourceTournamentId = filter_var(
+                    $_POST['source_tournament_id'] ?? null,
+                    FILTER_VALIDATE_INT,
+                    ['options' => ['min_range' => 1]]
+                );
+                if ($sourceTournamentId === false) {
+                    throw new DomainException('Bitte wähle ein Quellturnier aus.');
+                }
+
+                $importResult = importParticipants($db, $tournamentId, $sourceTournamentId);
+                $_SESSION['flash'] = [
+                    'type' => 'success',
+                    'message' => sprintf(
+                        'Spielerimport abgeschlossen: %d übernommen, %d wegen bereits vorhandener Namen übersprungen.',
+                        $importResult['imported'],
+                        $importResult['skipped']
+                    ),
+                ];
             } elseif ($action === 'assign_dartboard') {
                 assignDartboard(
                     $db,
@@ -189,6 +208,12 @@ $tournaments = tournaments($db);
 $flash = $_SESSION['flash'] ?? null;
 unset($_SESSION['flash']);
 $participants = $current ? participantsForTournament($db, (int) $current['id']) : [];
+$participantImportTournaments = $current
+    ? array_values(array_filter(
+        $tournaments,
+        static fn (array $tournament): bool => (int) $tournament['id'] !== (int) $current['id']
+    ))
+    : [];
 $matches = $current ? matchesForTournament($db, (int) $current['id']) : [];
 $upcomingPreview = upcomingMatchPreviews($db, $current, $matches);
 $rounds = [];
@@ -635,6 +660,25 @@ function e(mixed $value): string
                             </div>
                             <button class="button button-secondary" type="submit"><span aria-hidden="true">＋</span> Hinzufügen</button>
                         </form>
+                        <?php if ($participantImportTournaments !== []): ?>
+                            <form class="participant-entry participant-import" method="post">
+                                <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+                                <input type="hidden" name="action" value="import_participants">
+                                <input type="hidden" name="tournament_id" value="<?= (int) $current['id'] ?>">
+                                <div class="field">
+                                    <label for="source-tournament">Spieler aus anderem Turnier übernehmen</label>
+                                    <select id="source-tournament" name="source_tournament_id" required>
+                                        <option value="">Turnier auswählen</option>
+                                        <?php foreach ($participantImportTournaments as $sourceTournament): ?>
+                                            <option value="<?= (int) $sourceTournament['id'] ?>">
+                                                <?= e($sourceTournament['name']) ?><?= $sourceTournament['event_date'] ? ' · ' . e(date('d.m.Y', strtotime($sourceTournament['event_date']))) : '' ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <button class="button button-secondary" type="submit">Spieler importieren</button>
+                            </form>
+                        <?php endif; ?>
                     <?php endif; ?>
                     <?php if ($participants): ?>
                         <ul class="participant-list">

@@ -1033,6 +1033,10 @@ h2 {
     flex: 1;
 }
 
+.participant-import {
+    border-bottom: 1px solid #2b303d;
+}
+
 .participant-empty {
     display: flex;
     align-items: center;

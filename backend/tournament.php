@@ -375,6 +375,77 @@ function removeParticipant(PDO $db, int $tournamentId, int $participantId): void
     }
 }
 
+function importParticipants(PDO $db, int $tournamentId, int $sourceTournamentId): array
+{
+    if ($sourceTournamentId < 1 || $sourceTournamentId === $tournamentId) {
+        throw new DomainException('Bitte wähle ein anderes Turnier als Quelle aus.');
+    }
+
+    $db->beginTransaction();
+
+    try {
+        $statement = $db->prepare(
+            'SELECT id, status, archived
+             FROM tournaments
+             WHERE id IN (:tournament_id, :source_tournament_id)
+             ORDER BY id
+             FOR UPDATE'
+        );
+        $statement->execute([
+            'tournament_id' => $tournamentId,
+            'source_tournament_id' => $sourceTournamentId,
+        ]);
+        $lockedTournaments = [];
+        foreach ($statement->fetchAll() as $tournament) {
+            $lockedTournaments[(int) $tournament['id']] = $tournament;
+        }
+
+        $target = $lockedTournaments[$tournamentId] ?? null;
+        if ($target === null || (int) $target['archived'] === 1 || $target['status'] !== 'draft') {
+            throw new DomainException('Teilnehmer können nur in ein nicht archiviertes Turnier vor der Auslosung importiert werden.');
+        }
+
+        $source = $lockedTournaments[$sourceTournamentId] ?? null;
+        if ($source === null || (int) $source['archived'] === 1) {
+            throw new DomainException('Das ausgewählte Quellturnier wurde nicht gefunden oder ist archiviert.');
+        }
+
+        $statement = $db->prepare(
+            'SELECT name FROM participants WHERE tournament_id = :tournament_id ORDER BY name, id'
+        );
+        $statement->execute(['tournament_id' => $sourceTournamentId]);
+        $sourceNames = $statement->fetchAll(PDO::FETCH_COLUMN);
+
+        $insert = $db->prepare(
+            'INSERT INTO participants (tournament_id, name) VALUES (:tournament_id, :name)'
+        );
+        $importedCount = 0;
+        $skippedCount = 0;
+
+        foreach ($sourceNames as $name) {
+            try {
+                $insert->execute(['tournament_id' => $tournamentId, 'name' => $name]);
+                $importedCount++;
+            } catch (PDOException $exception) {
+                if (($exception->errorInfo[1] ?? null) !== 1062) {
+                    throw $exception;
+                }
+
+                $skippedCount++;
+            }
+        }
+
+        $db->commit();
+
+        return ['imported' => $importedCount, 'skipped' => $skippedCount];
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        throw $exception;
+    }
+}
+
 function drawTournament(PDO $db, int $tournamentId): void
 {
     $tournament = tournamentById($db, $tournamentId);

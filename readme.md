@@ -33,7 +33,7 @@ Alle Benutzer haben dieselben Rechte. In der Benutzerverwaltung können Konten e
 ## Backend-Funktionen
 
 - Turniere anlegen und Stammdaten vor der Auslosung bearbeiten
-- Teilnehmer hinzufügen und entfernen; doppelte Namen pro Turnier werden verhindert
+- Teilnehmer hinzufügen und entfernen sowie Spieler aus anderen nicht archivierten Turnieren importieren; vorhandene Namen werden beim Import übersprungen
 - zufällige Erstauslosung mit automatisch zugeordneten Freilosen
 - Einfach-KO mit automatischem Rundenfortschritt, Doppel-KO mit Ausscheiden nach der zweiten Niederlage, Rundenturnier (einmal jeder gegen jeden) sowie Gruppenphase mit anschließender K.-o.-Runde
 - Rundenturnier- und Gruppentabellen mit Siegen, Punktedifferenz und erzielten Punkten; bei der Gruppenphase qualifizieren sich pro Turnier wählbar ein bis vier Spieler je Gruppe
