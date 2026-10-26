@@ -1,3 +1,6 @@
+## Anmerkung: Der Code wurde vollständig mit KI generiert! Ich übernehme natürlich keine Verantwortung für die Funktionalität. Der Code darf nur privat oder durch Vereine genutzt und nicht verkauft oder verändert werden!
+
+
 # DartBracket
 
 Webbasierte Dartturnierverwaltung mit PHP, HTML und CSS. Turnier- und Benutzerdaten werden in MariaDB gespeichert.
