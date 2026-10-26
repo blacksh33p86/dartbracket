@@ -1,0 +1,138 @@
+:root {
+    color-scheme: dark;
+    --tree-bg: #090b12;
+    --tree-panel: #141925;
+    --tree-line: #2b3344;
+    --tree-text: #f7f8fc;
+    --tree-muted: #a4aec2;
+    --tree-purple: #c4a8ff;
+    --tree-green: #7ce0af;
+    --tree-orange: #ffc27e;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; margin: 0; }
+
+body {
+    min-width: 320px;
+    background:
+        radial-gradient(ellipse at 15% -15%, #33245c 0, transparent 42%),
+        var(--tree-bg);
+    color: var(--tree-text);
+    font-family: Arial, 'Helvetica Neue', sans-serif;
+}
+
+.tree-shell { min-height: 100vh; padding: clamp(18px, 3vw, 48px); }
+.tree-loading, .tree-empty { padding: 50px 20px; color: var(--tree-muted); text-align: center; }
+
+.tree-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--tree-line);
+}
+
+.tree-brand {
+    margin-bottom: 9px;
+    color: var(--tree-purple);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .18em;
+}
+
+.tree-title { margin: 0; font-size: clamp(30px, 4vw, 58px); overflow-wrap: anywhere; }
+.tree-subtitle { margin: 8px 0 0; color: var(--tree-muted); font-size: clamp(14px, 1.3vw, 19px); }
+.tree-header-actions { display: grid; justify-items: end; gap: 14px; flex-shrink: 0; }
+
+.tree-live {
+    padding: 8px 12px;
+    border: 1px solid #315143;
+    border-radius: 24px;
+    background: #17271f;
+    color: var(--tree-green);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .12em;
+}
+
+.tree-back { color: var(--tree-muted); text-decoration: none; }
+.tree-back:hover { color: var(--tree-text); }
+.tree-graph { display: grid; gap: 28px; padding: 26px 0; }
+
+.tree-lane {
+    min-width: 0;
+    overflow: hidden;
+    padding: 18px 18px 14px;
+    border: 1px solid var(--tree-line);
+    border-radius: 14px;
+    background: #10141eeb;
+}
+
+.tree-lane-title { margin: 0 0 12px; color: var(--tree-purple); font-size: 18px; }
+.tree-canvas { position: relative; overflow-x: auto; overflow-y: hidden; }
+.tree-round-column { position: relative; z-index: 2; flex: 0 0 276px; }
+.tree-canvas { display: flex; align-items: stretch; gap: 72px; }
+.tree-round-title { position: absolute; top: 0; left: 0; margin: 0; color: var(--tree-muted); font-size: 13px; }
+
+.tree-match {
+    position: absolute;
+    left: 0;
+    width: 260px;
+    min-height: 102px;
+    padding: 10px 12px;
+    border: 1px solid #374052;
+    border-left: 4px solid #6d778c;
+    border-radius: 9px;
+    background: var(--tree-panel);
+    box-shadow: 0 4px 18px #0005;
+}
+
+.tree-match-completed { border-left-color: var(--tree-green); }
+.tree-match-pending { border-left-color: var(--tree-orange); }
+.tree-match-bye { border-left-color: var(--tree-purple); }
+.tree-match-heading { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.tree-match-label { overflow: hidden; color: var(--tree-purple); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.tree-match-status { color: var(--tree-muted); font-size: 10px; flex-shrink: 0; }
+
+.tree-player {
+    display: flex;
+    min-height: 25px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid #2b303d;
+}
+
+.tree-player:last-of-type { border-bottom: 0; }
+.tree-player-name { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.tree-player-winner .tree-player-name { color: var(--tree-green); }
+.tree-score { font-size: 15px; }
+.tree-board, .tree-payout { display: inline-block; margin: 5px 7px 0 0; color: var(--tree-orange); font-size: 10px; }
+.tree-payout { color: var(--tree-purple); }
+
+.tree-connectors {
+    position: absolute;
+    z-index: 1;
+    inset: 0 auto auto 0;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.tree-connector-line {
+    fill: none;
+    stroke: #69748a;
+    stroke-width: 2;
+    opacity: .75;
+}
+
+.tree-lane-note { margin: 10px 0 0; color: var(--tree-muted); font-size: 12px; }
+.tree-footer { padding: 12px 0; color: #7d8799; font-size: 12px; }
+.tree-error { position: fixed; right: 18px; bottom: 18px; padding: 12px 16px; border-radius: 8px; background: #2e1f24; color: #ffcad0; }
+
+@media (max-width: 620px) {
+    .tree-header { align-items: flex-start; flex-direction: column; }
+    .tree-header-actions { width: 100%; align-items: center; justify-items: start; }
+    .tree-canvas { gap: 46px; }
+}
