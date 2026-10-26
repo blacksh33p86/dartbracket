@@ -502,15 +502,27 @@ function totalMatchCountForTournament(?array $tournament, int $participantCount,
     )));
 }
 
+function lockTournamentForResult(PDO $db, int $tournamentId): array
+{
+    $statement = $db->prepare('SELECT * FROM tournaments WHERE id = :id FOR UPDATE');
+    $statement->execute(['id' => $tournamentId]);
+    $tournament = $statement->fetch();
+
+    if (!$tournament) {
+        throw new DomainException('Das Turnier wurde nicht gefunden.');
+    }
+
+    return $tournament;
+}
+
 function recordResult(PDO $db, int $tournamentId, int $matchId, int $scoreOne, int $scoreTwo): void
 {
-    if ($scoreOne < 0 || $scoreTwo < 0 || $scoreOne === $scoreTwo) {
-        throw new DomainException('Bitte gib zwei unterschiedliche, nicht negative Ergebnisse ein.');
-    }
+    validateMatchScore($scoreOne, $scoreTwo);
 
     $db->beginTransaction();
 
     try {
+        lockTournamentForResult($db, $tournamentId);
         $statement = $db->prepare(
             "SELECT * FROM matches
              WHERE id = :match_id AND tournament_id = :tournament_id AND status = 'pending'"
@@ -553,6 +565,206 @@ function recordResult(PDO $db, int $tournamentId, int $matchId, int $scoreOne, i
     } catch (Throwable $exception) {
         $db->rollBack();
         throw $exception;
+    }
+}
+
+function editResult(PDO $db, int $tournamentId, int $matchId, int $scoreOne, int $scoreTwo): void
+{
+    validateMatchScore($scoreOne, $scoreTwo);
+    $db->beginTransaction();
+
+    try {
+        $tournament = lockTournamentForResult($db, $tournamentId);
+        $statement = $db->prepare(
+            "SELECT * FROM matches
+             WHERE id = :match_id AND tournament_id = :tournament_id AND status = 'completed'
+             FOR UPDATE"
+        );
+        $statement->execute(['match_id' => $matchId, 'tournament_id' => $tournamentId]);
+        $match = $statement->fetch();
+
+        if (!$match || $match['player_one_id'] === null || $match['player_two_id'] === null) {
+            throw new DomainException('Dieses beendete Spiel kann nicht geändert werden.');
+        }
+
+        $laterPlayed = $db->prepare(
+            "SELECT COUNT(*) FROM matches
+             WHERE tournament_id = :tournament_id
+               AND round_number > :round_number
+               AND status = 'completed'"
+        );
+        $laterPlayed->execute([
+            'tournament_id' => $tournamentId,
+            'round_number' => $match['round_number'],
+        ]);
+        if ((int) $laterPlayed->fetchColumn() > 0) {
+            throw new DomainException('Das Ergebnis kann nicht geändert werden, weil eine spätere Runde bereits gespielt wurde.');
+        }
+
+        if ((int) $tournament['archived'] === 1) {
+            throw new DomainException('Das Turnier wurde nicht gefunden oder ist archiviert.');
+        }
+
+        $winnerId = $scoreOne > $scoreTwo
+            ? (int) $match['player_one_id']
+            : (int) $match['player_two_id'];
+        $oldWinnerId = (int) $match['winner_id'];
+        $winnerChanged = $winnerId !== $oldWinnerId;
+        $format = (string) ($tournament['format'] ?? 'knockout');
+        $isGroupStageMatch = str_starts_with((string) $match['bracket'], 'Gruppe ');
+        $hasKnockoutMatches = false;
+
+        if ($format === 'groups_ko' && $isGroupStageMatch) {
+            $knockoutCount = $db->prepare(
+                "SELECT COUNT(*) FROM matches
+                 WHERE tournament_id = :tournament_id AND bracket = 'K.-o.-Runde'"
+            );
+            $knockoutCount->execute(['tournament_id' => $tournamentId]);
+            $hasKnockoutMatches = (int) $knockoutCount->fetchColumn() > 0;
+        }
+
+        $rebuildProgression = $format !== 'round_robin'
+            && ($winnerChanged || ($isGroupStageMatch && $hasKnockoutMatches));
+
+        if ($rebuildProgression) {
+            $qualifierIds = [];
+            if ($format === 'groups_ko' && !$isGroupStageMatch) {
+                $firstKnockoutRound = $db->prepare(
+                    "SELECT player_one_id, player_two_id
+                     FROM matches
+                     WHERE tournament_id = :tournament_id
+                       AND bracket = 'K.-o.-Runde'
+                       AND round_number = (
+                           SELECT MIN(round_number)
+                           FROM matches
+                           WHERE tournament_id = :first_round_tournament_id
+                             AND bracket = 'K.-o.-Runde'
+                       )
+                     ORDER BY match_number"
+                );
+                $firstKnockoutRound->execute([
+                    'tournament_id' => $tournamentId,
+                    'first_round_tournament_id' => $tournamentId,
+                ]);
+                foreach ($firstKnockoutRound->fetchAll() as $knockoutMatch) {
+                    foreach (['player_one_id', 'player_two_id'] as $column) {
+                        if ($knockoutMatch[$column] !== null) {
+                            $qualifierIds[(int) $knockoutMatch[$column]] = true;
+                        }
+                    }
+                }
+                if ($qualifierIds === []) {
+                    throw new RuntimeException('Die qualifizierten Spieler der K.-o.-Runde konnten nicht ermittelt werden.');
+                }
+            }
+
+            if ($format === 'groups_ko' && $isGroupStageMatch) {
+                $laterMatches = $db->prepare(
+                    "SELECT id, player_one_id, status
+                     FROM matches
+                     WHERE tournament_id = :tournament_id AND bracket = 'K.-o.-Runde'"
+                );
+                $laterMatches->execute(['tournament_id' => $tournamentId]);
+            } else {
+                $laterMatches = $db->prepare(
+                    'SELECT id, player_one_id, status
+                     FROM matches
+                     WHERE tournament_id = :tournament_id
+                       AND round_number > :round_number
+                       AND status <> \'completed\''
+                );
+                $laterMatches->execute([
+                    'tournament_id' => $tournamentId,
+                    'round_number' => $match['round_number'],
+                ]);
+            }
+
+            $matchesToRemove = $laterMatches->fetchAll();
+            foreach ($matchesToRemove as $laterMatch) {
+                if ($laterMatch['status'] === 'bye' && $laterMatch['player_one_id'] !== null) {
+                    $decrementBye = $db->prepare(
+                        'UPDATE participants
+                         SET bye_count = CASE WHEN bye_count > 0 THEN bye_count - 1 ELSE 0 END
+                         WHERE id = :id'
+                    );
+                    $decrementBye->execute(['id' => $laterMatch['player_one_id']]);
+                }
+                $deleteMatch = $db->prepare('DELETE FROM matches WHERE id = :id');
+                $deleteMatch->execute(['id' => $laterMatch['id']]);
+            }
+        }
+
+        $update = $db->prepare(
+            "UPDATE matches
+             SET score_one = :score_one, score_two = :score_two, winner_id = :winner_id
+             WHERE id = :id AND tournament_id = :tournament_id AND status = 'completed'"
+        );
+        $update->execute([
+            'score_one' => $scoreOne,
+            'score_two' => $scoreTwo,
+            'winner_id' => $winnerId,
+            'id' => $matchId,
+            'tournament_id' => $tournamentId,
+        ]);
+
+        if ($rebuildProgression) {
+            $reset = $db->prepare('UPDATE participants SET losses = 0 WHERE tournament_id = :id');
+            $reset->execute(['id' => $tournamentId]);
+
+            if ($format === 'groups_ko' && !$isGroupStageMatch) {
+                $qualified = array_keys($qualifierIds);
+                $placeholders = implode(',', array_fill(0, count($qualified), '?'));
+                $eliminate = $db->prepare(
+                    "UPDATE participants SET losses = 1
+                     WHERE tournament_id = ? AND id NOT IN ($placeholders)"
+                );
+                $eliminate->execute(array_merge([$tournamentId], $qualified));
+            }
+
+            $completedMatches = $db->prepare(
+                "SELECT bracket, player_one_id, player_two_id, winner_id
+                 FROM matches
+                 WHERE tournament_id = :tournament_id
+                   AND round_number <= :round_number
+                   AND status = 'completed'
+                 ORDER BY round_number, match_number"
+            );
+            $completedMatches->execute([
+                'tournament_id' => $tournamentId,
+                'round_number' => $match['round_number'],
+            ]);
+            $incrementLoss = $db->prepare('UPDATE participants SET losses = losses + 1 WHERE id = :id');
+
+            foreach ($completedMatches->fetchAll() as $completedMatch) {
+                $bracket = (string) $completedMatch['bracket'];
+                if ($bracket === 'Rundenturnier' || str_starts_with($bracket, 'Gruppe ')) {
+                    continue;
+                }
+
+                $loserId = (int) $completedMatch['player_one_id'] === (int) $completedMatch['winner_id']
+                    ? (int) $completedMatch['player_two_id']
+                    : (int) $completedMatch['player_one_id'];
+                $incrementLoss->execute(['id' => $loserId]);
+            }
+
+            $setInProgress = $db->prepare(
+                "UPDATE tournaments SET status = 'in_progress', updated_at = CURRENT_TIMESTAMP WHERE id = :id"
+            );
+            $setInProgress->execute(['id' => $tournamentId]);
+            advanceTournament($db, $tournamentId);
+        }
+
+        $db->commit();
+    } catch (Throwable $exception) {
+        $db->rollBack();
+        throw $exception;
+    }
+}
+
+function validateMatchScore(int $scoreOne, int $scoreTwo): void
+{
+    if ($scoreOne < 0 || $scoreTwo < 0 || $scoreOne === $scoreTwo) {
+        throw new DomainException('Bitte gib zwei unterschiedliche, nicht negative Ergebnisse ein.');
     }
 }
 

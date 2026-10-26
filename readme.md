@@ -38,6 +38,7 @@ Alle Benutzer haben dieselben Rechte. In der Benutzerverwaltung können Konten e
 - Einfach-KO mit automatischem Rundenfortschritt, Doppel-KO mit Ausscheiden nach der zweiten Niederlage, Rundenturnier (einmal jeder gegen jeden) sowie Gruppenphase mit anschließender K.-o.-Runde
 - Rundenturnier- und Gruppentabellen mit Siegen, Punktedifferenz und erzielten Punkten; bei der Gruppenphase qualifizieren sich pro Turnier wählbar ein bis vier Spieler je Gruppe
 - Ergebnisse erfassen; Paarungen der nächsten Runde werden danach erzeugt
+- gespeicherte Ergebnisse korrigieren, solange kein Spiel einer späteren Runde beendet wurde; abhängige, noch ungespielte Runden werden bei einer Siegeränderung neu erzeugt
 - K.-o.-Paarungen als Viertelfinale, Halbfinale oder Finale kennzeichnen; Finalspiele und ausdrücklich benannte Platzierungsspiele zeigen bei Bedarf den Bezug zu ausgeschütteten Plätzen
 - bei offenen Paarungen Dartboard-Kennzeichnung zuweisen, ändern oder entfernen; dasselbe Board kann nicht zwei offenen Spielen derselben Runde zugewiesen werden
 - Vorschau der nächsten Runde mit bereits bekannten Spielern; die Vorschau-Paarungen bleiben nach Abschluss der Runde unverändert bestehen
@@ -109,6 +110,7 @@ Die Datenbank-Verbindung wird über `DART_DB_HOST`, `DART_DB_PORT`, `DART_DB_NAM
 
 - `drawTournament()` sperrt weitere Teilnehmeränderungen, mischt die Teilnehmenden und erzeugt je nach Format die erste Runde. Einzel-KO und Doppel-KO verwenden K.-o.-Runden; Round Robin und Gruppenphase erzeugen ihre Begegnungen paarweise.
 - `recordResult()` akzeptiert nur offene Spiele mit zwei verschiedenen, nicht negativen Punktzahlen. Danach aktualisiert es Sieger und Niederlagen und ruft den Fortschritt des Turniers auf.
+- `editResult()` akzeptiert nur beendete Spiele, sofern in keiner späteren Runde bereits ein Spiel beendet wurde. Ändert sich der Sieger, entfernt die Funktion noch ungespielte Folgerunden, korrigiert die Verlust-/Freiloszähler und lässt den Turnierfortschritt aus den gültigen Ergebnissen erneut berechnen. Ein bereits gespieltes Spiel einer späteren Runde blockiert die Änderung serverseitig.
 - `advanceTournament()` erzeugt für KO-Formate Folgerunden, wertet bei Gruppen-KO die Tabellen aus und startet nach Abschluss der Gruppenphase die K.-o.-Runde. Round Robin endet, sobald keine offenen Begegnungen übrig sind.
 - `standingsForTournament()` berechnet Gruppen- und Rundentabellen aus abgeschlossenen Ergebnissen; sortiert wird nach Siegen, Punktedifferenz, erzielten Punkten und anschließend Namen.
 - `upcomingMatchPreviews()` berechnet mögliche nächste Paarungen aus bekannten Gewinnern und offenen Begegnungen, ohne diese vorzeitig als echte Matches zu speichern.

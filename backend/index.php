@@ -60,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $redirectSection = match ($_POST['action'] ?? '') {
         'add_participant', 'remove_participant' => 'teilnehmer',
         'save_payout' => 'ausschuettung',
-        'draw_tournament', 'save_result', 'assign_dartboard' => 'auslosung',
+        'draw_tournament', 'save_result', 'edit_result', 'assign_dartboard' => 'auslosung',
         default => 'turnier',
     };
 
@@ -152,6 +152,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 recordResult($db, $tournamentId, (int) ($_POST['match_id'] ?? 0), $scoreOne, $scoreTwo);
                 $_SESSION['flash'] = ['type' => 'success', 'message' => 'Das Ergebnis wurde gespeichert.'];
+            } elseif ($action === 'edit_result') {
+                $scoreOne = filter_var($_POST['score_one'] ?? null, FILTER_VALIDATE_INT);
+                $scoreTwo = filter_var($_POST['score_two'] ?? null, FILTER_VALIDATE_INT);
+
+                if ($scoreOne === false || $scoreTwo === false) {
+                    throw new DomainException('Bitte gib für beide Spieler ein ganzzahliges Ergebnis ein.');
+                }
+
+                editResult($db, $tournamentId, (int) ($_POST['match_id'] ?? 0), $scoreOne, $scoreTwo);
+                $_SESSION['flash'] = ['type' => 'success', 'message' => 'Das Ergebnis wurde geändert.'];
             } else {
                 throw new DomainException('Diese Aktion ist nicht verfügbar.');
             }
@@ -182,8 +192,12 @@ $participants = $current ? participantsForTournament($db, (int) $current['id']) 
 $matches = $current ? matchesForTournament($db, (int) $current['id']) : [];
 $upcomingPreview = upcomingMatchPreviews($db, $current, $matches);
 $rounds = [];
+$latestPlayedRound = 0;
 foreach ($matches as $match) {
     $rounds[$match['round_number']][] = $match;
+    if ($match['status'] === 'completed') {
+        $latestPlayedRound = max($latestPlayedRound, (int) $match['round_number']);
+    }
 }
 $matchDisplayLabels = matchDisplayLabels($matches, $current);
 $participantCount = count($participants);
@@ -779,6 +793,22 @@ function e(mixed $value): string
                                                     <input id="score-two-<?= (int) $match['id'] ?>" name="score_two" type="number" min="0" step="1" required aria-label="Ergebnis <?= e($match['player_two_name']) ?>">
                                                     <button class="button button-primary" type="submit">Ergebnis speichern</button>
                                                 </form>
+                                            <?php elseif ($match['status'] === 'completed' && (int) $match['round_number'] >= $latestPlayedRound): ?>
+                                                <form method="post" class="result-form edit-result-form">
+                                                    <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+                                                    <input type="hidden" name="action" value="edit_result">
+                                                    <input type="hidden" name="tournament_id" value="<?= (int) $current['id'] ?>">
+                                                    <input type="hidden" name="match_id" value="<?= (int) $match['id'] ?>">
+                                                    <label class="visually-hidden" for="edit-score-one-<?= (int) $match['id'] ?>">Neues Ergebnis <?= e($match['player_one_name']) ?></label>
+                                                    <label class="visually-hidden" for="edit-score-two-<?= (int) $match['id'] ?>">Neues Ergebnis <?= e($match['player_two_name']) ?></label>
+                                                    <input id="edit-score-one-<?= (int) $match['id'] ?>" name="score_one" type="number" min="0" step="1" required value="<?= (int) $match['score_one'] ?>" aria-label="Neues Ergebnis <?= e($match['player_one_name']) ?>">
+                                                    <span>:</span>
+                                                    <input id="edit-score-two-<?= (int) $match['id'] ?>" name="score_two" type="number" min="0" step="1" required value="<?= (int) $match['score_two'] ?>" aria-label="Neues Ergebnis <?= e($match['player_two_name']) ?>">
+                                                    <button class="button button-secondary" type="submit">Ergebnis ändern</button>
+                                                </form>
+                                                <p class="result-edit-note">Nur möglich, solange keine spätere Runde gespielt wurde.</p>
+                                            <?php elseif ($match['status'] === 'completed'): ?>
+                                                <p class="result-edit-note">Nicht änderbar: Eine spätere Runde wurde bereits gespielt.</p>
                                             <?php endif; ?>
                                         </article>
                                     <?php endforeach; ?>
