@@ -146,7 +146,43 @@ function currentUser(PDO $db): ?array
         return null;
     }
 
+    touchUserPresence($db, (int) $user['id']);
+
     return $user;
+}
+
+function touchUserPresence(PDO $db, int $userId): void
+{
+    $sessionToken = hash('sha256', session_id());
+    $statement = $db->prepare(
+        'INSERT INTO user_sessions (session_token, user_id, last_seen)
+         VALUES (:session_token, :user_id, CURRENT_TIMESTAMP)
+         ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), last_seen = CURRENT_TIMESTAMP'
+    );
+    $statement->execute(['session_token' => $sessionToken, 'user_id' => $userId]);
+}
+
+function removeCurrentUserPresence(PDO $db): void
+{
+    $statement = $db->prepare('DELETE FROM user_sessions WHERE session_token = :session_token');
+    $statement->execute(['session_token' => hash('sha256', session_id())]);
+}
+
+function activeUsers(PDO $db): array
+{
+    $db->exec(
+        'DELETE FROM user_sessions
+         WHERE last_seen < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE)'
+    );
+
+    return $db->query(
+        'SELECT users.id, users.username
+         FROM user_sessions
+         INNER JOIN users ON users.id = user_sessions.user_id
+         WHERE user_sessions.last_seen >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 MINUTE)
+         GROUP BY users.id, users.username
+         ORDER BY users.username'
+    )->fetchAll();
 }
 
 function loginUser(array $user): void
@@ -157,8 +193,9 @@ function loginUser(array $user): void
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-function logoutUser(): void
+function logoutUser(PDO $db): void
 {
+    removeCurrentUserPresence($db);
     $_SESSION = [];
 
     if (ini_get('session.use_cookies')) {
@@ -183,6 +220,111 @@ function users(PDO $db): array
          FROM users
          ORDER BY username'
     )->fetchAll();
+}
+
+function recordAuditLog(
+    PDO $db,
+    ?int $userId,
+    string $username,
+    string $action,
+    ?array $details = null
+): void {
+    $statement = $db->prepare(
+        'INSERT INTO audit_log (user_id, username, action, details)
+         VALUES (:user_id, :username, :action, :details)'
+    );
+    $statement->execute([
+        'user_id' => $userId,
+        'username' => mb_substr($username, 0, 32),
+        'action' => mb_substr($action, 0, 80),
+        'details' => $details === null
+            ? null
+            : json_encode($details, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+    ]);
+}
+
+function auditActionName(string $action): string
+{
+    return match ($action) {
+        'create_tournament' => 'Turnier angelegt',
+        'archive_tournament' => 'Turnier archiviert',
+        'delete_tournament' => 'Turnier gelöscht',
+        'save_tournament' => 'Turnierdaten geändert',
+        'save_payout' => 'Ausschüttung geändert',
+        'add_participant' => 'Teilnehmer hinzugefügt',
+        'import_participants' => 'Teilnehmer importiert',
+        'assign_dartboard' => 'Dartboard geändert',
+        'remove_participant' => 'Teilnehmer entfernt',
+        'draw_tournament' => 'Turnier ausgelost',
+        'save_result' => 'Ergebnis eingetragen',
+        'edit_result' => 'Ergebnis geändert',
+        'restore_tournament' => 'Turnier wiederhergestellt',
+        'delete_archived_tournament' => 'Archiviertes Turnier gelöscht',
+        'add_user' => 'Benutzer angelegt',
+        'delete_user' => 'Benutzer gelöscht',
+        'change_password' => 'Eigenes Passwort geändert',
+        'login' => 'Anmeldung erfolgreich',
+        'login_failed' => 'Anmeldeversuch fehlgeschlagen',
+        'first_user_setup' => 'Ersten Benutzer eingerichtet',
+        'logout' => 'Abmeldung',
+        'clear_audit_log' => 'Protokoll geleert',
+        default => 'Unbekannte Aktion',
+    };
+}
+
+function auditLogEntries(PDO $db, int $limit, int $offset): array
+{
+    $statement = $db->prepare(
+        'SELECT id, username, action, details, created_at
+         FROM audit_log
+         ORDER BY created_at DESC, id DESC
+         LIMIT :limit OFFSET :offset'
+    );
+    $statement->bindValue('limit', $limit, PDO::PARAM_INT);
+    $statement->bindValue('offset', $offset, PDO::PARAM_INT);
+    $statement->execute();
+
+    return $statement->fetchAll();
+}
+
+function auditLogCount(PDO $db): int
+{
+    return (int) $db->query('SELECT COUNT(*) FROM audit_log')->fetchColumn();
+}
+
+function isFirstUser(PDO $db, int $userId): bool
+{
+    return (int) $db->query('SELECT MIN(id) FROM users')->fetchColumn() === $userId;
+}
+
+function clearAuditLog(PDO $db, int $userId, string $username): int
+{
+    $db->beginTransaction();
+
+    try {
+        $firstUser = $db->query('SELECT id FROM users ORDER BY id LIMIT 1 FOR UPDATE')->fetchColumn();
+        if ($firstUser === false || (int) $firstUser !== $userId) {
+            throw new DomainException('Nur der Erstbenutzer darf das Protokoll leeren.');
+        }
+
+        $entryCount = auditLogCount($db);
+        $db->exec('DELETE FROM audit_log');
+        recordAuditLog(
+            $db,
+            $userId,
+            $username,
+            'Protokoll geleert',
+            ['entfernte_einträge' => $entryCount]
+        );
+        $db->commit();
+
+        return $entryCount;
+    } catch (Throwable $exception) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        throw $exception;
+    }
 }
 
 function deleteUser(PDO $db, int $userId, int $currentUserId): string

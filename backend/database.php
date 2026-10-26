@@ -8,7 +8,6 @@ function database(): PDO
     if ($connection instanceof PDO) {
         return $connection;
     }
-
     $host = getenv('DART_DB_HOST');
     $databaseName = getenv('DART_DB_NAME');
     $username = getenv('DART_DB_USER');
@@ -60,6 +59,33 @@ function initializeDatabase(PDO $connection): void
             password_hash VARCHAR(255) NOT NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY users_username_unique (username)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    SQL);
+
+    $connection->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            session_token CHAR(64) NOT NULL PRIMARY KEY,
+            user_id BIGINT UNSIGNED NOT NULL,
+            last_seen DATETIME NOT NULL,
+            KEY user_sessions_by_last_seen (last_seen),
+            KEY user_sessions_by_user (user_id),
+            CONSTRAINT user_sessions_user_fk
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    SQL);
+
+    $connection->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            user_id BIGINT UNSIGNED NULL,
+            username VARCHAR(32) NOT NULL,
+            action VARCHAR(80) NOT NULL,
+            details TEXT NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            KEY audit_log_by_created_at (created_at, id),
+            KEY audit_log_by_user (user_id),
+            CONSTRAINT audit_log_user_fk
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     SQL);
 

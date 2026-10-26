@@ -26,6 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($isFirstUser && ($_POST['action'] ?? '') === 'create_first_user') {
             $userId = createFirstUser($db, $username, $password);
             loginUser(['id' => $userId, 'username' => $username]);
+            recordAuditLog($db, $userId, $username, auditActionName('first_user_setup'));
             header('Location: index.php', true, 303);
             exit;
         }
@@ -35,6 +36,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($user !== null) {
                 loginUser($user);
+                recordAuditLog(
+                    $db,
+                    (int) $user['id'],
+                    (string) $user['username'],
+                    auditActionName('login')
+                );
                 header('Location: index.php', true, 303);
                 exit;
             }
@@ -46,6 +53,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         throw new DomainException('Benutzername oder Passwort ist nicht korrekt.');
     } catch (DomainException $exception) {
+        recordAuditLog(
+            $db,
+            null,
+            $username !== '' ? $username : 'Unbekannt',
+            auditActionName('login_failed')
+        );
         $error = $exception->getMessage();
     } catch (Throwable $exception) {
         error_log('Turnierverwaltung Login: ' . $exception->getMessage());

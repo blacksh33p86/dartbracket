@@ -52,7 +52,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        logoutUser();
+        recordAuditLog(
+            $db,
+            (int) $currentUser['id'],
+            (string) $currentUser['username'],
+            auditActionName('logout')
+        );
+        logoutUser($db);
         header('Location: login.php', true, 303);
         exit;
     }
@@ -63,15 +69,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'draw_tournament', 'save_result', 'edit_result', 'assign_dartboard' => 'auslosung',
         default => 'turnier',
     };
+    $action = (string) ($_POST['action'] ?? 'unbekannte Aktion');
+    $auditAttempted = false;
 
     try {
         validateCsrfToken($_POST);
 
-        $action = (string) ($_POST['action'] ?? '');
+        $auditDetails = [];
 
         if ($action === 'create_tournament') {
             $createdTournamentId = createTournament($db);
+            $createdTournament = tournamentById($db, $createdTournamentId);
             $_SESSION['active_tournament_id'] = $createdTournamentId;
+            $auditDetails = [
+                'turnier_id' => $createdTournamentId,
+                'turnier' => $createdTournament['name'] ?? null,
+            ];
             $_SESSION['flash'] = ['type' => 'success', 'message' => 'Ein neues Turnier wurde angelegt.'];
         } elseif ($action === 'archive_tournament') {
             $tournamentId = (int) ($_POST['tournament_id'] ?? 0);
@@ -81,6 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $archivedName = archiveTournament($db, $tournamentId);
+            $auditDetails = ['turnier_id' => $tournamentId, 'turnier' => $archivedName];
             unset($_SESSION['active_tournament_id']);
             $_SESSION['flash'] = [
                 'type' => 'success',
@@ -94,6 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $deletedName = deleteTournament($db, $tournamentId);
+            $auditDetails = ['turnier_id' => $tournamentId, 'turnier' => $deletedName];
             unset($_SESSION['active_tournament_id']);
             $_SESSION['flash'] = [
                 'type' => 'success',
@@ -107,7 +122,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $savedTournamentId = saveTournament($db, $_POST, $current);
+            $savedTournament = tournamentById($db, $savedTournamentId);
             $_SESSION['active_tournament_id'] = $savedTournamentId;
+            $auditDetails = [
+                'turnier_id' => $savedTournamentId,
+                'turnier' => $savedTournament['name'] ?? null,
+            ];
             $_SESSION['flash'] = ['type' => 'success', 'message' => 'Die Turnierdaten wurden gespeichert.'];
         } elseif ($action === 'save_payout') {
             $tournamentId = (int) ($_POST['tournament_id'] ?? 0);
@@ -117,6 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             savePayoutSettings($db, $tournamentId, $_POST);
+            $auditDetails = ['turnier_id' => $tournamentId, 'turnier' => $current['name']];
             $_SESSION['flash'] = ['type' => 'success', 'message' => 'Die Ausschüttung wurde gespeichert.'];
         } else {
             $tournamentId = (int) ($_POST['tournament_id'] ?? 0);
@@ -126,7 +147,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($action === 'add_participant') {
-                addParticipant($db, $tournamentId, (string) ($_POST['player_name'] ?? ''));
+                $playerName = trim((string) ($_POST['player_name'] ?? ''));
+                addParticipant($db, $tournamentId, $playerName);
+                $auditDetails = ['turnier_id' => $tournamentId, 'spieler' => $playerName];
                 $_SESSION['flash'] = ['type' => 'success', 'message' => 'Der Teilnehmer wurde hinzugefügt.'];
             } elseif ($action === 'import_participants') {
                 $sourceTournamentId = filter_var(
@@ -139,6 +162,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $importResult = importParticipants($db, $tournamentId, $sourceTournamentId);
+                $sourceTournament = tournamentById($db, $sourceTournamentId);
+                $auditDetails = [
+                    'turnier_id' => $tournamentId,
+                    'turnier' => $current['name'],
+                    'quellturnier_id' => $sourceTournamentId,
+                    'quellturnier' => $sourceTournament['name'] ?? null,
+                    'übernommen' => $importResult['imported'],
+                    'übersprungen' => $importResult['skipped'],
+                ];
                 $_SESSION['flash'] = [
                     'type' => 'success',
                     'message' => sprintf(
@@ -148,18 +180,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ),
                 ];
             } elseif ($action === 'assign_dartboard') {
+                $matchId = (int) ($_POST['match_id'] ?? 0);
+                $boardLabel = (string) ($_POST['board_label'] ?? '');
                 assignDartboard(
                     $db,
                     $tournamentId,
-                    (int) ($_POST['match_id'] ?? 0),
-                    (string) ($_POST['board_label'] ?? '')
+                    $matchId,
+                    $boardLabel
                 );
+                $auditDetails = [
+                    'turnier_id' => $tournamentId,
+                    'spiel_id' => $matchId,
+                    'dartboard' => trim($boardLabel) !== '' ? trim($boardLabel) : 'entfernt',
+                ];
                 $_SESSION['flash'] = ['type' => 'success', 'message' => 'Das Dartboard wurde der Paarung zugewiesen.'];
             } elseif ($action === 'remove_participant') {
-                removeParticipant($db, $tournamentId, (int) ($_POST['participant_id'] ?? 0));
+                $participantId = (int) ($_POST['participant_id'] ?? 0);
+                $participantStatement = $db->prepare(
+                    'SELECT name FROM participants WHERE id = :id AND tournament_id = :tournament_id'
+                );
+                $participantStatement->execute(['id' => $participantId, 'tournament_id' => $tournamentId]);
+                $participantName = $participantStatement->fetchColumn();
+                removeParticipant($db, $tournamentId, $participantId);
+                $auditDetails = [
+                    'turnier_id' => $tournamentId,
+                    'spieler_id' => $participantId,
+                    'spieler' => $participantName,
+                ];
                 $_SESSION['flash'] = ['type' => 'success', 'message' => 'Der Teilnehmer wurde entfernt.'];
             } elseif ($action === 'draw_tournament') {
                 drawTournament($db, $tournamentId);
+                $auditDetails = ['turnier_id' => $tournamentId, 'turnier' => $current['name']];
                 $_SESSION['flash'] = ['type' => 'success', 'message' => 'Die Paarungen wurden zufällig ausgelost.'];
             } elseif ($action === 'save_result') {
                 $scoreOne = filter_var($_POST['score_one'] ?? null, FILTER_VALIDATE_INT);
@@ -169,7 +220,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new DomainException('Bitte gib für beide Spieler ein ganzzahliges Ergebnis ein.');
                 }
 
-                recordResult($db, $tournamentId, (int) ($_POST['match_id'] ?? 0), $scoreOne, $scoreTwo);
+                $matchId = (int) ($_POST['match_id'] ?? 0);
+                recordResult($db, $tournamentId, $matchId, $scoreOne, $scoreTwo);
+                $auditDetails = [
+                    'turnier_id' => $tournamentId,
+                    'spiel_id' => $matchId,
+                    'ergebnis' => $scoreOne . ':' . $scoreTwo,
+                ];
                 $_SESSION['flash'] = ['type' => 'success', 'message' => 'Das Ergebnis wurde gespeichert.'];
             } elseif ($action === 'edit_result') {
                 $scoreOne = filter_var($_POST['score_one'] ?? null, FILTER_VALIDATE_INT);
@@ -179,16 +236,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new DomainException('Bitte gib für beide Spieler ein ganzzahliges Ergebnis ein.');
                 }
 
-                editResult($db, $tournamentId, (int) ($_POST['match_id'] ?? 0), $scoreOne, $scoreTwo);
+                $matchId = (int) ($_POST['match_id'] ?? 0);
+                editResult($db, $tournamentId, $matchId, $scoreOne, $scoreTwo);
+                $auditDetails = [
+                    'turnier_id' => $tournamentId,
+                    'spiel_id' => $matchId,
+                    'neues_ergebnis' => $scoreOne . ':' . $scoreTwo,
+                ];
                 $_SESSION['flash'] = ['type' => 'success', 'message' => 'Das Ergebnis wurde geändert.'];
             } else {
                 throw new DomainException('Diese Aktion ist nicht verfügbar.');
             }
         }
+
+        $auditAttempted = true;
+        recordAuditLog(
+            $db,
+            (int) $currentUser['id'],
+            (string) $currentUser['username'],
+            auditActionName($action),
+            $auditDetails
+        );
     } catch (DomainException $exception) {
+        if (!$auditAttempted) {
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action) . ' (fehlgeschlagen)',
+                ['status' => 'fehlgeschlagen']
+            );
+        }
         $_SESSION['flash'] = ['type' => 'error', 'message' => $exception->getMessage()];
     } catch (Throwable $exception) {
         error_log('Turnierverwaltung: ' . $exception->getMessage());
+        if (!$auditAttempted) {
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action) . ' (fehlgeschlagen)',
+                ['status' => 'fehlgeschlagen']
+            );
+        }
         $_SESSION['flash'] = [
             'type' => 'error',
             'message' => 'Die Änderung konnte wegen eines technischen Fehlers nicht gespeichert werden.',
@@ -204,6 +294,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $csrfToken = ensureCsrfToken();
+$activeUsers = activeUsers($db);
 $tournaments = tournaments($db);
 $flash = $_SESSION['flash'] ?? null;
 unset($_SESSION['flash']);
@@ -320,7 +411,32 @@ function e(mixed $value): string
                     <span class="nav-icon" aria-hidden="true">♙</span>
                     Benutzerverwaltung
                 </a>
+                <a class="nav-link" href="audit.php">
+                    <span class="nav-icon" aria-hidden="true">☷</span>
+                    Protokoll
+                </a>
             </nav>
+
+            <section
+                class="active-users"
+                aria-labelledby="active-users-title"
+                data-active-users
+                data-current-user-id="<?= (int) $currentUser['id'] ?>"
+            >
+                <h2 id="active-users-title">ANGEMELDETE NUTZER <span data-active-users-count><?= count($activeUsers) ?></span></h2>
+                <ul data-active-users-list>
+                    <?php foreach ($activeUsers as $activeUser): ?>
+                        <li>
+                            <span class="active-user-dot" aria-hidden="true"></span>
+                            <span class="active-user-name"><?= e($activeUser['username']) ?></span>
+                            <?php if ((int) $activeUser['id'] === (int) $currentUser['id']): ?>
+                                <span class="active-user-self">Du</span>
+                            <?php endif; ?>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+                <p class="active-users-status" aria-live="polite" data-active-users-status>Aktiv in den letzten 2 Minuten</p>
+            </section>
 
             <div class="sidebar-note">
                 <span class="note-dot" aria-hidden="true"></span>
@@ -929,5 +1045,6 @@ function e(mixed $value): string
             updateQualifiersVisibility();
         }
     </script>
+    <script src="presence.js" defer></script>
 </body>
 </html>

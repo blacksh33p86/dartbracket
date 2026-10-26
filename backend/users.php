@@ -18,15 +18,33 @@ unset($_SESSION['user_flash']);
 $csrfToken = ensureCsrfToken();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = (string) ($_POST['action'] ?? 'unbekannte Aktion');
+    $auditAttempted = false;
     try {
         validateCsrfToken($_POST);
-        $action = (string) ($_POST['action'] ?? '');
 
         if ($action === 'add_user') {
-            createUser($db, (string) ($_POST['username'] ?? ''), (string) ($_POST['password'] ?? ''));
+            $newUsername = (string) ($_POST['username'] ?? '');
+            $newUserId = createUser($db, $newUsername, (string) ($_POST['password'] ?? ''));
+            $auditAttempted = true;
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action),
+                ['neuer_benutzer_id' => $newUserId, 'neuer_benutzer' => $newUsername]
+            );
             $_SESSION['user_flash'] = 'Der Benutzer wurde angelegt.';
         } elseif ($action === 'delete_user') {
             $deletedUsername = deleteUser($db, (int) ($_POST['user_id'] ?? 0), (int) $currentUser['id']);
+            $auditAttempted = true;
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action),
+                ['benutzer' => $deletedUsername]
+            );
             $_SESSION['user_flash'] = sprintf('Der Benutzer „%s“ wurde gelöscht.', $deletedUsername);
         } elseif ($action === 'change_password') {
             changeUserPassword(
@@ -35,9 +53,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 (string) ($_POST['current_password'] ?? ''),
                 (string) ($_POST['new_password'] ?? '')
             );
+            $auditAttempted = true;
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action)
+            );
             $_SESSION['user_flash'] = 'Das Passwort wurde geändert.';
         } elseif ($action === 'logout') {
-            logoutUser();
+            $auditAttempted = true;
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action)
+            );
+            logoutUser($db);
             header('Location: login.php', true, 303);
             exit;
         } else {
@@ -47,9 +79,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: users.php', true, 303);
         exit;
     } catch (DomainException $exception) {
+        if (!$auditAttempted) {
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action) . ' (fehlgeschlagen)',
+                ['status' => 'fehlgeschlagen']
+            );
+        }
         $error = $exception->getMessage();
     } catch (Throwable $exception) {
         error_log('Turnierverwaltung Benutzerverwaltung: ' . $exception->getMessage());
+        if (!$auditAttempted) {
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action) . ' (fehlgeschlagen)',
+                ['status' => 'fehlgeschlagen']
+            );
+        }
         $error = 'Die Benutzeränderung konnte wegen eines technischen Fehlers nicht verarbeitet werden.';
     }
 
@@ -70,6 +120,7 @@ function e(mixed $value): string
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#10131b">
     <title>Benutzerverwaltung | DartBracket</title>
+    <meta name="csrf-token" content="<?= e($csrfToken) ?>">
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="auth-page">
@@ -176,5 +227,6 @@ function e(mixed $value): string
             </div>
         </div>
     </main>
+    <script src="presence.js" defer></script>
 </body>
 </html>

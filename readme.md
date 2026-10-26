@@ -28,7 +28,7 @@ Für PHP wird `PDO_MYSQL` benötigt. Nach dem Setzen der Datenbank-Umgebungsvari
 
 Beim ersten Aufruf von `backend/login.php` wird die Ersteinrichtung angezeigt. Lege dort den ersten Benutzernamen und ein mindestens 6 Zeichen langes Passwort fest. Danach ist die öffentliche Registrierung geschlossen; weitere Konten werden nach der Anmeldung über „Benutzerverwaltung“ angelegt.
 
-Alle Benutzer haben dieselben Rechte. In der Benutzerverwaltung können Konten erstellt und gelöscht sowie das eigene Passwort geändert werden. Benutzerpasswörter werden mit `password_hash()` gespeichert. Der Backend-Zugriff und alle schreibenden Formulare sind durch Anmeldung und CSRF-Tokens geschützt. Eine HTTPS-Verbindung wird für sichere Session-Cookies verwendet, wenn der Webserver HTTPS meldet.
+Alle Benutzer haben dieselben Rechte. In der Benutzerverwaltung können Konten erstellt und gelöscht sowie das eigene Passwort geändert werden. Benutzerpasswörter werden mit `password_hash()` gespeichert. Unter dem Hauptmenü werden aktive Nutzer angezeigt; die Aktivität wird alle 30 Sekunden erneuert und gilt zwei Minuten. Der Backend-Zugriff und alle schreibenden Formulare sind durch Anmeldung und CSRF-Tokens geschützt. Eine HTTPS-Verbindung wird für sichere Session-Cookies verwendet, wenn der Webserver HTTPS meldet.
 
 ## Backend-Funktionen
 
@@ -41,6 +41,7 @@ Alle Benutzer haben dieselben Rechte. In der Benutzerverwaltung können Konten e
 - gespeicherte Ergebnisse korrigieren, solange kein Spiel einer späteren Runde beendet wurde; abhängige, noch ungespielte Runden werden bei einer Siegeränderung neu erzeugt
 - K.-o.-Paarungen als Viertelfinale, Halbfinale oder Finale kennzeichnen; Finalspiele und ausdrücklich benannte Platzierungsspiele zeigen bei Bedarf den Bezug zu ausgeschütteten Plätzen
 - bei offenen Paarungen Dartboard-Kennzeichnung zuweisen, ändern oder entfernen; dasselbe Board kann nicht zwei offenen Spielen derselben Runde zugewiesen werden
+- Aktionen und Anmeldeversuche im geschützten Protokoll mit Nutzername und Mikrosekunden-Zeitstempel nachvollziehen; nur der Erstbenutzer kann es leeren, wobei die Löschung selbst als neuer Eintrag erhalten bleibt
 - Vorschau der nächsten Runde mit bereits bekannten Spielern; die Vorschau-Paarungen bleiben nach Abschluss der Runde unverändert bestehen
 - Doppel-KO-Finale mit Rückspiel, wenn der Spieler aus der Verliererrunde das erste Finale gewinnt
 - Turnierstatus, offene Spiele und Turniersieger in der Übersicht anzeigen
@@ -100,6 +101,8 @@ php -S 127.0.0.1:8000 -t backend
 | Tabelle | Inhalt und Beziehungen |
 | --- | --- |
 | `users` | Benutzername, Passwort-Hash und Erstellungszeit. Der Benutzername ist eindeutig und wird ohne Beachtung der Groß-/Kleinschreibung verglichen. |
+| `user_sessions` | Gehashte Sitzungstoken und letzte Aktivität für die Anzeige angemeldeter Nutzer. |
+| `audit_log` | Aktionsereignisse mit Nutzer-Snapshot, Aktion, optionalen JSON-Details und Zeitstempel mit Mikrosekunden. |
 | `tournaments` | Turniername, Datum, Startgebühr in Cent, Ausschüttungseinstellungen, Format, Modus, Status und Archivstatus. |
 | `participants` | Spieler pro Turnier, Niederlagen und Freilose. Gehört per Fremdschlüssel zu `tournaments`; Namen sind innerhalb eines Turniers eindeutig. |
 | `matches` | Runde, Matchnummer, Turnierbaum/Gruppe, Spieler, Sieger, Ergebnis, Dartboard und Spielstatus. Verweist auf Turnier und optionale Teilnehmer. |

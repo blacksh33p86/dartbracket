@@ -17,9 +17,10 @@ $error = null;
 $csrfToken = ensureCsrfToken();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = (string) ($_POST['action'] ?? 'unbekannte Aktion');
+    $auditAttempted = false;
     try {
         validateCsrfToken($_POST);
-        $action = (string) ($_POST['action'] ?? '');
         if (!in_array($action, ['restore_tournament', 'delete_archived_tournament'], true)) {
             throw new DomainException('Diese Aktion ist nicht verfügbar.');
         }
@@ -32,19 +33,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($action === 'restore_tournament') {
             restoreTournament($db, $tournamentId);
+            $auditAttempted = true;
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action),
+                ['turnier_id' => $tournamentId]
+            );
             $_SESSION['active_tournament_id'] = $tournamentId;
             $_SESSION['flash'] = ['type' => 'success', 'message' => 'Das Turnier wurde wiederhergestellt.'];
             header('Location: index.php?tournament_id=' . $tournamentId, true, 303);
         } else {
             $deletedName = deleteArchivedTournament($db, $tournamentId);
+            $auditAttempted = true;
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action),
+                ['turnier_id' => $tournamentId, 'turnier' => $deletedName]
+            );
             $_SESSION['archive_flash'] = sprintf('Das Turnier „%s“ und alle zugehörigen Daten wurden endgültig gelöscht.', $deletedName);
             header('Location: archive.php', true, 303);
         }
         exit;
     } catch (DomainException $exception) {
+        if (!$auditAttempted) {
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action) . ' (fehlgeschlagen)',
+                ['status' => 'fehlgeschlagen']
+            );
+        }
         $error = $exception->getMessage();
     } catch (Throwable $exception) {
         error_log('Turnierverwaltung Archiv: ' . $exception->getMessage());
+        if (!$auditAttempted) {
+            recordAuditLog(
+                $db,
+                (int) $currentUser['id'],
+                (string) $currentUser['username'],
+                auditActionName($action) . ' (fehlgeschlagen)',
+                ['status' => 'fehlgeschlagen']
+            );
+        }
         $error = 'Die Archivaktion konnte wegen eines technischen Fehlers nicht ausgeführt werden.';
     }
 }
@@ -74,6 +109,7 @@ function tournamentStatusLabel(string $status): string
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#10131b">
     <title>Turnierarchiv | DartBracket</title>
+    <meta name="csrf-token" content="<?= e($csrfToken) ?>">
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="auth-page">
@@ -149,5 +185,6 @@ function tournamentStatusLabel(string $status): string
             <?php endif; ?>
         </div>
     </main>
+    <script src="presence.js" defer></script>
 </body>
 </html>
