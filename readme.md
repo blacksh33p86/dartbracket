@@ -1,5 +1,9 @@
 ## Anmerkung: Der Code wurde vollständig mit KI generiert! Ich übernehme natürlich keine Verantwortung für die Funktionalität. Der Code darf nur privat oder durch Vereine genutzt und nicht verkauft oder verändert werden!
 
+Version: v0.6
+Author: Marcel Keßelheim
+License: nur für private Zwecke (und Vereine), keine Verändungen oder kommerzielle Nutzung
+
 
 # DartBracket
 
